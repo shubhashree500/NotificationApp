@@ -1,34 +1,82 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, FlatList, StyleSheet, ActivityIndicator } from "react-native";
+import {
+  View,
+  Text,
+  FlatList,
+  StyleSheet,
+  ActivityIndicator,
+  Alert,
+} from "react-native";
 import axios from "axios";
-import { io } from "socket.io-client";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { io, Socket } from "socket.io-client";
+
+const API_BASE = "http://192.168.1.9:5000";
 
 const NotificationsScreen = () => {
-  const [notifications, setNotifications] = useState([]);
+  const [notifications, setNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [socket, setSocket] = useState<Socket | null>(null);
 
   useEffect(() => {
-    fetchNotifications();
+    const initialize = async () => {
+      try {
+        // 1. Fetch or set dummy userId for testing
+        let storedUserId = await AsyncStorage.getItem("userId");
 
-    const socket = io("http://192.168.1.9:5000");
+        if (!storedUserId) {
+          storedUserId = "user123"; // fallback for testing
+          await AsyncStorage.setItem("userId", storedUserId);
+        }
 
-    socket.on("new-notification", (data) => {
-      setNotifications((prev) => [data, ...prev]);
-    });
+        setUserId(storedUserId);
+
+        // 2. Fetch notifications from backend
+        await fetchNotifications(storedUserId);
+
+        // 3. Initialize socket and register userId
+        const newSocket = io(API_BASE, {
+          transports: ["websocket"],
+        });
+
+        newSocket.on("connect", () => {
+          console.log("✅ Connected to socket:", newSocket.id);
+          newSocket.emit("register", storedUserId);
+        });
+
+        newSocket.on("new-notification", (data) => {
+          console.log("🔔 New notification:", data);
+          setNotifications((prev) => [data, ...prev]);
+        });
+
+        setSocket(newSocket);
+      } catch (err) {
+        console.error("Initialization error:", err);
+        Alert.alert("Error", "Failed to initialize notifications");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    initialize();
 
     return () => {
-      socket.disconnect();
+      if (socket) {
+        socket.disconnect();
+        console.log("🔌 Socket disconnected");
+      }
     };
   }, []);
 
-  const fetchNotifications = async () => {
+  const fetchNotifications = async (uid: string) => {
     try {
-      const response = await axios.get("http://192.168.1.9:5000/api/notifications");
+      const response = await axios.get(`${API_BASE}/api/notifications`, {
+        params: { userId: uid },
+      });
       setNotifications(response.data);
     } catch (error) {
       console.error("Error fetching notifications:", error);
-    } finally {
-      setLoading(false);
     }
   };
 
